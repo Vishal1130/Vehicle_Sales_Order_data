@@ -1,0 +1,228 @@
+  1. #Using Hortonworks Data Platform(HDP) 2.5
+
+	2. Store raw data into hdfs location?
+
+>> Answer: vehicles sales order raw data is stored on HDFS location: /tmp/hive_vish/sales_order_data.csv
+
+	3. Create a internal hive table "sales_order_csv" which will store csv data sales_order_csv .. make sure to skip header row while creating table?
+
+>>Answer: Created internal table to store raw csv data into it using below query:
+-------------------------------------------
+create table sales_data_csv
+(
+ordernum int,
+quantityordered int,
+priceeach float,
+orderlinenum int,
+sales float,
+status string,
+qtr_id int,
+month_id int,
+year int,
+productline string,
+msrp int,
+productcode string,
+phone string,
+city string,
+state string,
+postalcode string,
+country string,
+territory string,
+contactlastname string,
+contactfirstname string,
+dealsize string
+)
+row format delimited
+fields terminated by ','
+tblproperties("skip.header.line.count"="1");
+----------------------------------------------
+
+
+	4. Load data from hdfs path into "sales_order_csv" 
+
+>>Answer: used below command to load data into above created managed table(internal) from HDFS location:
+ ---------------------------------------------------------------------------------------------
+ load data inpath '/tmp/hive_vish/' into table sales_data_csv;
+ ---------------------------------------------------------------------------------------------
+
+	5. Create an internal hive table which will store data in ORC format "sales_order_orc"
+
+>>Answer: Created internal table in hive which will store sales data in orc format using below query:
+
+---------------------------------------------------------------------------------------------
+create table sales_data_orc
+(
+ordernum int,
+quantityordered int,
+priceeach float,
+orderlinenum int,
+sales float,
+status string,
+qtr_id int,
+month_id int,
+year int,
+productline string,
+msrp int,
+productcode string,
+phone string,
+city string,
+state string,
+postalcode string,
+country string,
+territory string,
+contactlastname string,
+contactfirstname string,
+dealsize string
+)
+stored as orc;
+---------------------------------------------------------------------------------------------
+
+	6. Load data from "sales_order_csv" into "sales_order_orc"
+
+>>Answer: 
+---------------------------------------------------------------------------------------------
+from sales_data_csv insert overwrite table sales_data_orc select *;
+---------------------------------------------------------------------------------------------
+
+Now perform below queries on "sales_order_orc" table :
+
+
+	a. Calculate total sales per year
+Answer: First created dynamic partitioning on year column to seprate each year data in separate partition, this will make data fetching fast.
+
+---------------------------------------------------------------------------------------------
+create table sales_data_dynamic_part
+(
+sales float,
+country string
+)
+partitioned by (year int)
+;
+
+## Set hive property to let hive know that we will be doing dynamic partitioning
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+## load data from sales_data_orc into partitionig table:
+
+insert overwrite table sales_data_dynamic_part partition(year) select sales, country ,year from sales_Data_orc;
+
+
+## now run below query to get total sales per year
+
+select year, sum(sales) as total_sales from sales_data_dynamic_part group by year;   
+--------------------------------------------------------------------------------------------
+
+	b. Find a product for which maximum orders were placed?
+  
+>>Answer: If we have data partitioned over product column, then data will be fetched faster:
+
+--------------------------------------------------------------------------------------------
+##Create partition table on "Productline" column:
+
+create table sales_data_prod_dyn_part
+(
+qtyordered int
+)
+partitioned by (productline string);
+
+## Set hive property to let hive know that we will be doing dynamic partitioning
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+## load data into above partition table
+
+insert overwrite table sales_data_prod_dyn_part partition(productline) select quantityordered, productline from sales_data_orc; 
+
+## Run below query to get product with max orders:
+
+select productline, sum(qtyordered)as sum_qty from sales_data_prod_dyn_part group by productline order by sum_qty desc limit 1;
+
+-------------------------------------------------------------------------------------------- 
+c. Calculate the total sales for each quarter
+
+>>Answer: Partion by quater and then fecth result for above problem to get faster results.
+---------------------------------------------------------------------------------------------
+#create partition table on 'qtr_id' column:
+
+create table sales_data_qtr_dyn_part
+(
+sales float
+)
+partitioned by (qtr_id string);
+
+## Set hive property to let hive know that we will be doing dynamic partitioning
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+## load data into qtr_id partition tables using below query:
+
+insert overwrite table sales_data_qtr_dyn_part partition(qtr_id) select sales, qtr_id from sales_Data_orc group by qtr_id;
+
+## Run below query to get sales for each quater:
+
+select qtr_id, sum(sales) from sales_data_qtr_dyn_part group by qtr_id;
+----------------------------------------------------------------------------------------------
+d. In which quarter sales was minimum
+
+>>Answer: Run below query to get quater with min sales:
+-----------------------------------------------------------------------------------------------
+select qtr_id, sum(sales) from sales_data_qtr_dyn_part group by qtr_id order by sum(sales) limit 1;
+-----------------------------------------------------------------------------------------------
+
+e. In which country sales was maximum and in which country sales was minimum
+
+>>Answer: create partition table over country column and then fetch result for above problem to get faster result:
+
+----------------------------------------------------------------------------------------------
+##Create partition table over Country column:
+
+create table sales_data_country_dyn_part
+(
+sales float)
+partitioned by (country string);
+
+## Set hive property to let hive know that we will be doing dynamic partitioning
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+##Load data into above created partition:
+
+insert overwrite table sales_data_country_dyn_part partition(country) select sales, country from sales_Data_orc;
+
+## run below query to get result for above problem statement:
+
+select country, total_sales, 'Maximum' as sales from (select country, sum(sales) as total_sales from sales_data_country_dyn_part group by country order by total_sales desc Limit 1)subq1
+UNION
+select country, total_sales, 'Minimum' as sales from (select country, sum(sales) as total_sales from sales_data_country_dyn_part group by country order by total_sales Limit 1)subq2;
+
+
+f. Calculate quartelry sales for each city
+
+>>Answer: Here we will create dynamic multipartitioning to fecth result faster:
+
+----------------------------------------------------------------------------------------
+
+## create multi-partitioning table
+
+create table sales_data_city_qtr_multi_part
+(
+sales float
+)
+partitioned by (city string, qtr_id int);
+
+## Set hive property to let hive know that we will be doing dynamic partitioning
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+## ##Load data into multi-partition table from sales_data_orc:
+
+insert overwrite table sales_order_city_qtr_multi_part partition(city,qtr_id) select sales, city, qtr_id) from sales_data_orc;
+
+## Run below query to get quaterly sales from each city:
+
+Select city,qtr_id, sum(sales) as total_sales from sales_data_city_qtr_multi_part group by city, qtr_id;
+
+h. Find a month for each year in which maximum number of quantities were sold
+
+select year, month , max(sale) from sales_data_orc group by year,month;

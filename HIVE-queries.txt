@@ -225,4 +225,10 @@ Select city,qtr_id, sum(sales) as total_sales from sales_data_city_qtr_multi_par
 
 h. Find a month for each year in which maximum number of quantities were sold
 
-select year, month , max(sale) from sales_data_orc group by year,month;
+>>Answer: Created temp table to store month wise total sales for each year and then used the same table to get month with max sales for each year using below query:
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+Create temporary table IF Not Exists sales_data_year_month as select year_id, month_id , sum(sales) as total_sales from sales_data_orc group by year_id,month_id;
+select s2.year_id as year, s2.month_id as month_with_max_sales from (select year_id, max(total_sales) as max_Sales from sales_data_year_month group by year_id) s1
+INNER JOIN
+sales_data_year_month s2 on s1.max_Sales = s2.total_sales;
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
